@@ -2,6 +2,7 @@ import _ from 'lodash';
 import flatten from '../../../core/utils/flatten';
 import TimeSeries from '../../../core/time_series2';
 import TableModel from '../../../core/table_model';
+import TemplateSrv from '../../../features/templating/template_srv';
 
 var transformers = {};
 
@@ -62,6 +63,112 @@ transformers['timeseries_to_columns'] = {
 
       model.rows.push(values);
     }
+  },
+};
+
+transformers['grouping_to_matrix'] = {
+  description: 'Grouping to matrix',
+  getColumns: function(data) {
+    // Get column set identifiers from templating variables
+    var columns = new Array();
+    if (TemplateSrv.variables !== undefined) {
+      for (let v of TemplateSrv.variables) {
+        var text = String('$' + v.name);
+        var name = String(v.name);
+        columns.push({ text: text, value: name });
+      }
+    }
+    // Get column set identifiers from the data
+    if (data.length > 0) {
+      var series = data[0];
+      var columnsString = series.target.slice(series.target.indexOf('{') + 1, -1);
+      var columnsArray = columnsString.split(', ');
+      var colOrRow1 = columnsArray[0].split(': ');
+      var colOrRow2 = columnsArray[1].split(': ');
+      columns.push({ text: colOrRow1[0], value: colOrRow1[0] });
+      columns.push({ text: colOrRow2[0], value: colOrRow2[0] });
+    }
+    return columns;
+  },
+  transform: function(data, panel, model) {
+    const points = new Map<string, Map<string, any>>();
+    const columns = new Set<string>();
+    const rows = new Set<string>();
+
+    // If a templating variable matches with the selected column set, get columnId from the variable
+    // If not, the selected column set is the columnId
+    var columnId = undefined;
+    if (!panel || panel.columns.length !== 0) {
+      if (TemplateSrv.variables !== undefined && panel.columns[0].text.charAt(0) === '$') {
+        for (let v of TemplateSrv.variables) {
+          var name = String(v.name);
+          var value;
+          if (v.current !== undefined) {
+            value = String(v.current.value);
+          } else {
+            value = undefined;
+          }
+          if (name !== panel.columns[0].value) {
+            continue;
+          } else {
+            columnId = value;
+            break;
+          }
+        }
+      }
+      if (columnId === undefined) {
+        columnId = panel.columns[0].value;
+      }
+    }
+
+    // Get columns and rows from the data
+    for (let series of data) {
+      var columnsString = series.target.slice(series.target.indexOf('{') + 1, -1);
+      var columnsArray = columnsString.split(', ');
+      var column;
+      var row;
+      var colOrRow1 = columnsArray[0].split(': ');
+      var colOrRow2 = columnsArray[1].split(': ');
+      if (columnId === colOrRow2[0]) {
+        column = colOrRow2[1];
+        row = colOrRow1[1];
+      } else {
+        column = colOrRow1[1];
+        row = colOrRow2[1];
+      }
+      columns.add(column);
+      rows.add(row);
+
+      if (!points.has(column)) {
+        points.set(column, new Map<string, any>());
+      }
+
+      // We take only the first measure reported (datapoints[0]) and
+      // we don't care about the timestamp of that measure (datapoints[0][0])
+      points.get(column).set(row, series.datapoints[0][0]);
+    }
+
+    // Removing the empty or 0-only rows and columns
+    /*const filteredRows = Array.from(rows.values()).filter(
+      r => points.has(r) && Array.from(points.get(r).values()).reduce(
+        (p, c) => p || c !== 0, false));
+
+    const filteredColumns = Array.from(columns.values()).filter(
+      c => Array.from(points.values()).reduce(
+        (p, r) => p || (r.has(c) && r.get(c) !== 0), false));*/
+
+    const filteredRows = Array.from(rows.values()).sort((a, b) => a.localeCompare(b));
+    const filteredColumns = Array.from(columns.values()).sort((a, b) => a.localeCompare(b));
+
+    // Addition of columns and rows to the model.
+    model.columns.push({ text: '' });
+    filteredColumns.forEach(c => model.columns.push({ text: c }));
+
+    filteredRows.forEach(r =>
+      model.rows.push(
+        [r].concat(filteredColumns.map(c => (points.has(c) && points.get(c).has(r) ? points.get(c).get(r) : undefined)))
+      )
+    );
   },
 };
 

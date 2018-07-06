@@ -38,6 +38,10 @@ export class TablePanelEditorCtrl {
       case 'table': {
         this.columnsHelpMessage = 'Columns and their order are determined by the data query';
       }
+      case 'grouping_to_matrix': {
+        this.canSetColumns = true;
+        break;
+      }
     }
   }
 
